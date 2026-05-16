@@ -16,7 +16,7 @@ sheet = spreadsheet.sheet1
 TMDB_API_KEY = "1e08f4e7f84d8985db9da59d7d71e8e8"
 
 st.set_page_config(page_title="Varun's Buffet Pro", layout="wide")
-st.title("🍽️ Varun’s Cinematic Buffet PRO")
+st.title("🍽️ Varun’s Cinematic Buffet PRO (Personal)")
 
 def update_sheet(row_idx, col_idx, value):
     sheet.update_cell(row_idx, col_idx, value)
