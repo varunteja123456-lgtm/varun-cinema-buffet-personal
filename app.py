@@ -37,7 +37,7 @@ menu = st.sidebar.radio(
 if menu == "🔍 Add New Content":
     # Load existing titles ONLY when searching to prevent false "Already in Buffet" errors
     all_values = sheet.get_all_values()
-    existing_titles = [row[0].lower() for row in all_values[1:]] if len(all_values) > 1 else []
+    existing_titles = [row[0].lower() for row in all_values[1:] if row and row[0]] if len(all_values) > 1 else []
 
     query = st.text_input("Search Cinema or Web Series:")
     if query:
@@ -75,7 +75,6 @@ if menu == "🔍 Add New Content":
                 # Check duplicate
                 if title.lower() in existing_titles:
                     st.warning(f"Note: '{title}' is already in your Buffet lists.")
-                    # We use a warning instead of a block, but we hide the add buttons below
                 
                 st.write(f"🎭 {genres}")
                 st.write(f"⏳ {dur_str}")
@@ -105,79 +104,101 @@ if menu == "🔍 Add New Content":
 # --- 5. DISPLAY LISTS ---
 else:
     all_values = sheet.get_all_values()
-    headers = all_values[0]
-    df_master = pd.DataFrame(all_values[1:], columns=headers)
-    
-    status_map = {"⏳ Yet to Watch": "Planned", "📺 Started Watching": "Watching", "✅ Completed Watching": "Completed"}
-    target_status = status_map[menu]
-    filtered_df = df_master[df_master['Status'] == target_status]
-    
-    if filtered_df.empty:
+    if len(all_values) <= 1:
         st.info(f"No titles in {menu} yet.")
     else:
-        if target_status == "Planned":
-            filtered_df['Interest Weight'] = pd.to_numeric(filtered_df['Interest Weight'], errors='coerce')
-            filtered_df['Trust Rating'] = pd.to_numeric(filtered_df['Trust Rating'], errors='coerce')
-            filtered_df = filtered_df.sort_values(by=['Interest Weight', 'Trust Rating'], ascending=[False, False])
+        headers = all_values[0]
+        df_master = pd.DataFrame(all_values[1:], columns=headers)
+        
+        # Clean data to eliminate empty rows from layout calculation
+        df_master.dropna(how='all', inplace=True)
+        df_master = df_master[df_master['Name'].str.strip() != ""]
+        
+        status_map = {"⏳ Yet to Watch": "Planned", "📺 Started Watching": "Watching", "✅ Completed Watching": "Completed"}
+        target_status = status_map[menu]
+        filtered_df = df_master[df_master['Status'] == target_status]
+        
+        if filtered_df.empty:
+            st.info(f"No titles in {menu} yet.")
         else:
-            filtered_df = filtered_df.iloc[::-1]
+            # --- ADVANCED SORTING LOGIC ---
+            if target_status == "Planned":
+                # Convert ratings to numerical formats for calculation
+                filtered_df['Interest Weight'] = pd.to_numeric(filtered_df['Interest Weight'], errors='coerce')
+                filtered_df['Trust Rating'] = pd.to_numeric(filtered_df['Trust Rating'], errors='coerce')
+                
+                # Create a hidden column tracking sheet index to prioritize latest entries during a tie
+                filtered_df['row_sequence'] = filtered_df.index
+                
+                # Order: Interest (High -> Low) -> Trust (High -> Low) -> Sequence (Newest -> Oldest)
+                filtered_df = filtered_df.sort_values(
+                    by=['Interest Weight', 'Trust Rating', 'row_sequence'], 
+                    ascending=[False, False, False]
+                )
+            else:
+                # For Started and Completed lists: Pure reverse chronological display
+                filtered_df = filtered_df.iloc[::-1]
 
-        n = 4
-        for i in range(0, len(filtered_df), n):
-            cols = st.columns(n)
-            chunk = filtered_df.iloc[i:i+n]
-            for j, (idx, row) in enumerate(chunk.iterrows()):
-                row_num = int(idx) + 2
-                with cols[j]:
-                    st.image(row['Poster URL'], width=180)
-                    st.markdown(f"**{row['Name']}**")
-                    st.caption(f"{row['Year']} | {row['Type']}")
-                    st.write(f"🎭 {row['Genre']}")
-                    st.write(f"⏳ {row['Duration']}")
+            n = 4
+            for i in range(0, len(filtered_df), n):
+                cols = st.columns(n)
+                chunk = filtered_df.iloc[i:i+n]
+                for j, (idx, row) in enumerate(chunk.iterrows()):
+                    row_num = int(idx) + 2
+                    with cols[j]:
+                        st.image(row['Poster URL'], width=180)
+                        st.markdown(f"**{row['Name']}**")
+                        st.caption(f"{row['Year']} | {row['Type']}")
+                        st.write(f"🎭 {row['Genre']}")
+                        st.write(f"⏳ {row['Duration']}")
 
-                    # --- PENCIL ICON EDITING ---
-                    ci1, ci2 = st.columns([4, 1])
-                    ci1.write(f"⭐ IMDB: {row['IMDB Rating']}")
-                    if ci2.button("✏️", key=f"e_imdb_{idx}"): st.session_state[f"m_imdb_{idx}"] = True
-                    if st.session_state.get(f"m_imdb_{idx}"):
-                        new_imdb = st.text_input("New Rating:", row['IMDB Rating'], key=f"in_imdb_{idx}")
-                        if st.button("Save", key=f"s_imdb_{idx}"):
-                            update_sheet(row_num, 5, new_imdb)
-                            del st.session_state[f"m_imdb_{idx}"]
-                            st.rerun()
+                        # --- PENCIL ICON EDITING ---
+                        # IMDB Rating
+                        ci1, ci2 = st.columns([4, 1])
+                        ci1.write(f"⭐ IMDB: {row['IMDB Rating']}")
+                        if ci2.button("✏️", key=f"e_imdb_{idx}"): st.session_state[f"m_imdb_{idx}"] = True
+                        if st.session_state.get(f"m_imdb_{idx}"):
+                            new_imdb = st.text_input("New Rating:", row['IMDB Rating'], key=f"in_imdb_{idx}")
+                            if st.button("Save", key=f"s_imdb_{idx}"):
+                                update_sheet(row_num, 5, new_imdb)
+                                del st.session_state[f"m_imdb_{idx}"]
+                                st.rerun()
 
-                    interest = row['Interest Level']
-                    color = {"High": "green", "Medium": "orange", "Low": "gray"}.get(interest, "blue")
-                    cn1, cn2 = st.columns([4, 1])
-                    cn1.markdown(f":{color}[❤️ {interest}]")
-                    if cn2.button("✏️", key=f"e_int_{idx}"): st.session_state[f"m_int_{idx}"] = True
-                    if st.session_state.get(f"m_int_{idx}"):
-                        new_int = st.select_slider("New Interest:", ["Low", "Medium", "High"], value=interest, key=f"in_int_{idx}")
-                        if st.button("Save", key=f"s_int_{idx}"):
-                            w_map = {"High": 3, "Medium": 2, "Low": 1}
-                            sheet.update_cell(row_num, 9, new_int)
-                            sheet.update_cell(row_num, 10, w_map[new_int])
-                            del st.session_state[f"m_int_{idx}"]
-                            st.rerun()
+                        # Interest Level
+                        interest = row['Interest Level']
+                        color = {"High": "green", "Medium": "orange", "Low": "gray"}.get(interest, "blue")
+                        cn1, cn2 = st.columns([4, 1])
+                        cn1.markdown(f":{color}[❤️ {interest}]")
+                        if cn2.button("✏️", key=f"e_int_{idx}"): st.session_state[f"m_int_{idx}"] = True
+                        if st.session_state.get(f"m_int_{idx}"):
+                            new_int = st.select_slider("New Interest:", ["Low", "Medium", "High"], value=interest, key=f"in_int_{idx}")
+                            if st.button("Save", key=f"s_int_{idx}"):
+                                w_map = {"High": 3, "Medium": 2, "Low": 1}
+                                sheet.update_cell(row_num, 9, new_int)
+                                sheet.update_cell(row_num, 10, w_map[new_int])
+                                del st.session_state[f"m_int_{idx}"]
+                                st.rerun()
 
-                    trust = row['Trust Rating']
-                    ct1, ct2 = st.columns([4, 1])
-                    ct1.write(f"⭐ Trust: {trust}")
-                    if ct2.button("✏️", key=f"e_tru_{idx}"): st.session_state[f"m_tru_{idx}"] = True
-                    if st.session_state.get(f"m_tru_{idx}"):
-                        new_tru = st.slider("New Trust:", 2.0, 5.0, float(trust) if trust else 4.0, 0.5, key=f"in_tru_{idx}")
-                        if st.button("Save", key=f"s_tru_{idx}"):
-                            update_sheet(row_num, 8, new_tru)
-                            del st.session_state[f"m_tru_{idx}"]
-                            st.rerun()
+                        # Trust Rating
+                        trust = row['Trust Rating']
+                        ct1, ct2 = st.columns([4, 1])
+                        ct1.write(f"⭐ Trust: {trust}")
+                        if ct2.button("✏️", key=f"e_tru_{idx}"): st.session_state[f"m_tru_{idx}"] = True
+                        if st.session_state.get(f"m_tru_{idx}"):
+                            new_tru = st.slider("New Trust:", 2.0, 5.0, float(trust) if trust else 4.0, 0.5, key=f"in_tru_{idx}")
+                            if st.button("Save", key=f"s_tru_{idx}"):
+                                update_sheet(row_num, 8, new_tru)
+                                del st.session_state[f"m_tru_{idx}"]
+                                st.rerun()
 
-                    if target_status == "Planned":
-                        if st.button("🎬 Start Watching", key=f"btn_sw_{idx}", use_container_width=True): 
-                            update_sheet(row_num, 11, "Watching")
-                        if st.button("✅ Already Watched", key=f"btn_aw_{idx}", use_container_width=True): 
-                            update_sheet(row_num, 11, "Completed")
-                    elif target_status == "Watching":
-                        if st.button("✅ Finished Watching", key=f"btn_fw_{idx}", use_container_width=True): 
-                            update_sheet(row_num, 11, "Completed")
+                        # --- ACTION BUTTONS ---
+                        if target_status == "Planned":
+                            if st.button("🎬 Start Watching", key=f"btn_sw_{idx}", use_container_width=True): 
+                                update_sheet(row_num, 11, "Watching")
+                            if st.button("✅ Already Watched", key=f"btn_aw_{idx}", use_container_width=True): 
+                                update_sheet(row_num, 11, "Completed")
+                        elif target_status == "Watching":
+                            if st.button("✅ Finished Watching", key=f"btn_fw_{idx}", use_container_width=True): 
+                                update_sheet(row_num, 11, "Completed")
 
-                    st.write("---")
+                        st.write("---")
